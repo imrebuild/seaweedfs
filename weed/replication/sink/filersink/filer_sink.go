@@ -32,6 +32,7 @@ type FilerSink struct {
 	address           string
 	writeChunkByFiler bool
 	isIncremental     bool
+	executor          *util.LimitedConcurrentExecutor
 }
 
 func init() {
@@ -83,6 +84,7 @@ func (fs *FilerSink) DoInitialize(address, grpcAddress string, dir string,
 	fs.diskType = diskType
 	fs.grpcDialOption = grpcDialOption
 	fs.writeChunkByFiler = writeChunkByFiler
+	fs.executor = util.NewLimitedConcurrentExecutor(32)
 	return nil
 }
 

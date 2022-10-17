@@ -5,6 +5,7 @@ import (
 	"io"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb"
@@ -82,12 +83,21 @@ func NewStore(grpcDialOption grpc.DialOption, ip string, port int, grpcPort int,
 	minFreeSpaces []util.MinFreeSpace, idxFolder string, needleMapKind NeedleMapKind, diskTypes []DiskType) (s *Store) {
 	s = &Store{grpcDialOption: grpcDialOption, Port: port, Ip: ip, GrpcPort: grpcPort, PublicUrl: publicUrl, NeedleMapKind: needleMapKind}
 	s.Locations = make([]*DiskLocation, 0)
+
+	var wg sync.WaitGroup
 	for i := 0; i < len(dirnames); i++ {
 		location := NewDiskLocation(dirnames[i], int32(maxVolumeCounts[i]), minFreeSpaces[i], idxFolder, diskTypes[i])
-		location.loadExistingVolumes(needleMapKind)
 		s.Locations = append(s.Locations, location)
 		stats.VolumeServerMaxVolumeCounter.Add(float64(maxVolumeCounts[i]))
+
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			location.loadExistingVolumes(needleMapKind)
+		}()
 	}
+	wg.Wait()
+
 	s.NewVolumesChan = make(chan master_pb.VolumeShortInformationMessage, 3)
 	s.DeletedVolumesChan = make(chan master_pb.VolumeShortInformationMessage, 3)
 
@@ -361,6 +371,12 @@ func (s *Store) SetStopping() {
 	}
 }
 
+func (s *Store) LoadNewVolumes() {
+	for _, location := range s.Locations {
+		location.loadExistingVolumes(s.NeedleMapKind)
+	}
+}
+
 func (s *Store) Close() {
 	for _, location := range s.Locations {
 		location.Close()
@@ -532,12 +548,12 @@ func (s *Store) ConfigureVolume(i needle.VolumeId, replication string) error {
 		vifFile := filepath.Join(location.Directory, baseFileName+".vif")
 		volumeInfo, _, _, err := volume_info.MaybeLoadVolumeInfo(vifFile)
 		if err != nil {
-			return fmt.Errorf("volume %d fail to load vif: %v", i, err)
+			return fmt.Errorf("volume %d failed to load vif: %v", i, err)
 		}
 		volumeInfo.Replication = replication
 		err = volume_info.SaveVolumeInfo(vifFile, volumeInfo)
 		if err != nil {
-			return fmt.Errorf("volume %d fail to save vif: %v", i, err)
+			return fmt.Errorf("volume %d failed to save vif: %v", i, err)
 		}
 		return nil
 	}
