@@ -134,13 +134,9 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 				delete(volumeIdToVInfo, volumeId)
 				continue
 			}
-			// or skip /topics/.system/log without collection name
-			if (*c.collection != "" && vinfo.collection != *c.collection) || vinfo.collection == "" {
+			if *c.collection != "" && vinfo.collection != *c.collection {
 				delete(volumeIdToVInfo, volumeId)
 				continue
-			}
-			if *c.volumeId > 0 && *c.collection == "" {
-				*c.collection = vinfo.collection
 			}
 			cutoffFrom := time.Now().Add(-*cutoffTimeAgo).UnixNano()
 			err = c.collectOneVolumeFileIds(dataNodeId, volumeId, vinfo, uint64(cutoffFrom))
@@ -400,9 +396,8 @@ func (c *commandVolumeFsck) collectOneVolumeFileIds(dataNodeId string, volumeId 
 				}
 				buf.Write(resp.FileContent)
 			}
-			fileredBuf := filterDeletedNeedleFromIdx(buf.Bytes())
 			if vinfo.isReadOnly == false {
-				index, err := idx.FirstInvalidIndex(fileredBuf.Bytes(),
+				index, err := idx.FirstInvalidIndex(buf.Bytes(),
 					func(key types.NeedleId, offset types.Offset, size types.Size) (bool, error) {
 						resp, err := volumeServerClient.ReadNeedleMeta(context.Background(), &volume_server_pb.ReadNeedleMetaRequest{
 							VolumeId: volumeId,
@@ -413,16 +408,16 @@ func (c *commandVolumeFsck) collectOneVolumeFileIds(dataNodeId string, volumeId 
 						if err != nil {
 							return false, fmt.Errorf("to read needle meta with id %d from volume %d with error %v", key, volumeId, err)
 						}
-						return resp.LastModified <= cutoffFrom, nil
+						return resp.AppendAtNs <= cutoffFrom, nil
 					})
 				if err != nil {
 					fmt.Fprintf(c.writer, "Failed to search for last valid index on volume %d with error %v", volumeId, err)
 				} else {
-					fileredBuf.Truncate(index * types.NeedleMapEntrySize)
+					buf.Truncate(index * types.NeedleMapEntrySize)
 				}
 			}
 			idxFilename := getVolumeFileIdFile(c.tempFolder, dataNodeId, volumeId)
-			err = writeToFile(fileredBuf.Bytes(), idxFilename)
+			err = writeToFile(buf.Bytes(), idxFilename)
 			if err != nil {
 				return fmt.Errorf("failed to copy %d%s from %s: %v", volumeId, ext, vinfo.server, err)
 			}
@@ -548,7 +543,7 @@ func (c *commandVolumeFsck) oneVolumeFileIdsSubtractFilerFileIds(dataNodeId stri
 		return
 	}
 
-	voluemAddr := pb.NewServerAddressWithGrpcPort(dataNodeId, 0)
+	volumeAddr := pb.NewServerAddressWithGrpcPort(dataNodeId, 0)
 	if err = c.readFilerFileIdFile(volumeId, func(nId types.NeedleId, itemPath util.FullPath) {
 		inUseCount++
 		if *c.verifyNeedle {
@@ -557,7 +552,7 @@ func (c *commandVolumeFsck) oneVolumeFileIdsSubtractFilerFileIds(dataNodeId stri
 				if v.Size > newSize {
 					v.Size = newSize
 				}
-				if _, err := readSourceNeedleBlob(c.env.option.GrpcDialOption, voluemAddr, volumeId, *v); err != nil {
+				if _, err := readSourceNeedleBlob(c.env.option.GrpcDialOption, volumeAddr, volumeId, *v); err != nil {
 					fmt.Fprintf(c.writer, "failed to read file %s NeedleBlob %+v: %+v", itemPath, nId, err)
 					if *c.forcePurging {
 						return
@@ -707,15 +702,4 @@ func writeToFile(bytes []byte, fileName string) error {
 
 	dst.Write(bytes)
 	return nil
-}
-
-func filterDeletedNeedleFromIdx(arr []byte) bytes.Buffer {
-	var filteredBuf bytes.Buffer
-	for i := 0; i < len(arr); i += types.NeedleMapEntrySize {
-		size := types.BytesToSize(arr[i+types.NeedleIdSize+types.OffsetSize : i+types.NeedleIdSize+types.OffsetSize+types.SizeSize])
-		if size > 0 {
-			filteredBuf.Write(arr[i : i+types.NeedleIdSize+types.OffsetSize+types.SizeSize])
-		}
-	}
-	return filteredBuf
 }
