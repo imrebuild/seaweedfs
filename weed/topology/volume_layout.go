@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
-	"math/rand"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -287,17 +286,17 @@ func (vl *VolumeLayout) PickForWrite(count uint64, option *VolumeGrowOption) (*n
 		//glog.V(0).Infoln("No more writable volumes!")
 		return nil, 0, nil, errors.New("No more writable volumes!")
 	}
-	if option.DataCenter == "" && option.Rack == "" && option.DataNode == "" {
-		vid := vl.writables[rand.Intn(lenWriters)]
-		locationList := vl.vid2location[vid]
-		if locationList != nil {
-			return &vid, count, locationList, nil
-		}
-		return nil, 0, nil, errors.New("Strangely vid " + vid.String() + " is on no machine!")
-	}
+	//if option.DataCenter == "" && option.Rack == "" && option.DataNode == "" {
+	//	vid := vl.writables[rand.Intn(lenWriters)]
+	//	locationList := vl.vid2location[vid]
+	//	if locationList != nil {
+	//		return &vid, count, locationList, nil
+	//	}
+	//	return nil, 0, nil, errors.New("Strangely vid " + vid.String() + " is on no machine!")
+	//}
 	var vid needle.VolumeId
 	var locationList *VolumeLocationList
-	counter := 0
+	var maxVolumeSize uint64 = 0
 	for _, v := range vl.writables {
 		volumeLocationList := vl.vid2location[v]
 		for _, dn := range volumeLocationList.list {
@@ -310,9 +309,15 @@ func (vl *VolumeLayout) PickForWrite(count uint64, option *VolumeGrowOption) (*n
 			if option.DataNode != "" && dn.Id() != NodeId(option.DataNode) {
 				continue
 			}
-			counter++
-			if rand.Intn(counter) < 1 {
+
+			// quickly fill volume to full capacity for cloud tier
+			vInfo, err := dn.GetVolumesById(v)
+			if err != nil {
+				continue
+			}
+			if vInfo.Size > maxVolumeSize {
 				vid, locationList = v, volumeLocationList.Copy()
+				maxVolumeSize = vInfo.Size
 			}
 		}
 	}

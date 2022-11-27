@@ -33,7 +33,7 @@ func downloadFromWebdav(conn *gowebdav.Client, destFileName string, sourcePath s
 
 	stream, err := conn.ReadStream(sourcePath)
 	defer stream.Close()
-	buf := make([]byte, 8)
+	buf := make([]byte, 8192)
 	_, err = io.CopyBuffer(fileWriter, stream, buf)
 	if err != nil {
 		return fileSize, fmt.Errorf("failed to download /%s to %s: %v", sourcePath, destFileName, err)

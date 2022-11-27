@@ -21,7 +21,7 @@ type BackendFactory struct {
 }
 
 func (factory *BackendFactory) StorageType() backend.StorageType {
-	return backend.StorageType("webdav")
+	return "webdav"
 }
 
 func (factory *BackendFactory) BuildStorage(configuration backend.StringProperties, configPrefix string, id string) (backend.BackendStorage, error) {
